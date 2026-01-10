@@ -1,0 +1,34 @@
+node_modules/
+dist/
+
+*.log
+
+.npmrc
+
+# npm
+package-lock.json
+# pnpm
+pnpm-lock.yaml
+.pnpm-store/
+.pnpm-debug.log
+# yarn
+yarn.lock
+.yarn/
+.pnp.cjs
+.pnp.loader.mjs
+
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+# Linux
+*.swp
+.*.sw?
+~*
