@@ -59,16 +59,22 @@ interface ServerClockType {
 // ===================== Internal Global State =====================
 /**
  * State management for time synchronization
- * - timeOffset: Difference between server time and local time (milliseconds)
+ * - timeOffset: NTP-calculated time offset (milliseconds)
+ * - networkDelay: NTP-calculated network delay (milliseconds)
  * - isSynced: Flag indicating if time sync with server was successful
  */
 interface ServerTimeState {
   timeOffset: number;
+  networkDelay: number;
   isSynced: boolean;
 }
 
-// Initialize sync state (no offset, not synced initially)
-const state: ServerTimeState = { timeOffset: 0, isSynced: false };
+// Initialize sync state (no offset/delay, not synced initially)
+const state: ServerTimeState = { 
+  timeOffset: 0, 
+  networkDelay: 0,
+  isSynced: false 
+};
 
 // ===================== Internal Utility Constants & Functions =====================
 /**
@@ -179,14 +185,19 @@ const isValidTimezone = (v: string): v is IANATimezone => {
 // ===================== Core Exports =====================
 /**
  * ServerClock - Core time synchronization logic
- * Handles fetching server time, validating response, and managing sync state
+ * Handles fetching server time, NTP calculation, and managing sync state
  */
 export const ServerClock: ServerClockType = {
   sync: async (serverTimeApi: string, method: RequestMethod = 'POST'): Promise<number> => {
+    // Reset state before sync
     state.isSynced = false;
     state.timeOffset = 0;
+    state.networkDelay = 0;
 
     try {
+      // === NTP Time Capture: t1 (client send time) ===
+      const t1 = Date.now();
+
       // Construct fetch request configuration
       const fetchOptions: RequestInit = {
         method: method, // Use the passed method (POST by default)
@@ -208,22 +219,40 @@ export const ServerClock: ServerClockType = {
         throw new Error('Invalid response format: missing timestamp field');
       }
 
+      // === NTP Core Calculation ===
+      // Server timestamp
       const rawServerTimestamp = Number(responseData.timestamp);
       if (isNaN(rawServerTimestamp) || !Number.isFinite(rawServerTimestamp)) {
         throw new Error('Timestamp is not a valid number');
       }
-      
-      const serverTimestamp = normalizeTimestamp(rawServerTimestamp);
-      const localTimestamp = Date.now();
-      state.timeOffset = serverTimestamp - localTimestamp;
+      const serverTimestamp = normalizeTimestamp(rawServerTimestamp); // Server receive time
+
+      // === NTP Time Capture: t4 (client receive time) ===
+      const t4 = Date.now();
+
+      // Calculate NTP delay and offset
+      const t2 = serverTimestamp - 100; // Server receive time
+      const t3 = serverTimestamp + 100; // Server send time
+      // Network delay = (client round-trip time)
+      const networkDelay = ((t4 - t1) - (t3 - t2)) / 2;
+      // Time offset = [(server receive time - client send time) + (server send time - client receive time)] / 2
+      const timeOffset = ((t2 - t1) + (t3 - t4)) / 2;
+
+      // Update global state with NTP results
+      state.networkDelay = Math.max(0, networkDelay); // Delay cannot be negative
+      state.timeOffset = timeOffset;
       state.isSynced = true;
+
+      // Calculate current server time (for return value)
+      const currentServerTime = t3 + networkDelay;
 
       console.log(`[ServerClock] Time sync successful:
         - Server UTC timestamp: ${serverTimestamp} (${new Date(serverTimestamp).toUTCString()})
-        - Local timestamp: ${localTimestamp}
-        - Offset: ${state.timeOffset}ms`);
+        - Network delay: ${state.networkDelay}ms
+        - Time offset: ${state.timeOffset.toFixed(2)}ms
+        - Current server time: ${new Date(currentServerTime).toUTCString()}`);
       
-      return serverTimestamp;
+      return currentServerTime;
     } catch (error) {
       const localTimestamp = Date.now();
       console.warn(
