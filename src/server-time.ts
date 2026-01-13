@@ -59,19 +59,22 @@ interface ServerClockType {
 // ===================== Internal Global State =====================
 /**
  * State management for time synchronization
- * - timeOffset: NTP-calculated time offset (milliseconds)
+ * - monotonicSyncTime: Monotonic time at sync success (performance.now(), ms)
+ * - serverSyncTimestamp: Server timestamp at sync success (UTC milliseconds)
  * - networkDelay: NTP-calculated network delay (milliseconds)
  * - isSynced: Flag indicating if time sync with server was successful
  */
 interface ServerTimeState {
-  timeOffset: number;
+  monotonicSyncTime: number;    // Monotonic time at sync (not affected by system time)
+  serverSyncTimestamp: number;  // Server time at sync
   networkDelay: number;
   isSynced: boolean;
 }
 
-// Initialize sync state (no offset/delay, not synced initially)
+// Initialize sync state
 const state: ServerTimeState = { 
-  timeOffset: 0, 
+  monotonicSyncTime: 0,
+  serverSyncTimestamp: 0,
   networkDelay: 0,
   isSynced: false 
 };
@@ -112,11 +115,20 @@ const normalizeTimestamp = (timestamp: number): number => {
 
 /**
  * Get current timestamp with sync fallback logic
+ * Use performance.now() as monotonic time source, not affected by system time changes
  * @returns Server timestamp (UTC milliseconds) if synced, local timestamp if failed
  */
 const getServerTimestamp = (): number => {
-  const now = Date.now();
-  return state.isSynced ? now + state.timeOffset : now;
+  // Return system time directly if not synced
+  if (!state.isSynced) return Date.now();
+
+  // Core fix: Calculate time difference using monotonic time
+  // performance.now() → Monotonically increasing, not affected by system time
+  const currentMonotonicTime = performance.now();
+  // Calculate monotonic time difference since sync
+  const monotonicTimeDiff = currentMonotonicTime - state.monotonicSyncTime;
+  // Server time = Server time at sync + monotonic time difference
+  return state.serverSyncTimestamp + monotonicTimeDiff;
 };
 
 /**
@@ -191,12 +203,13 @@ export const ServerClock: ServerClockType = {
   sync: async (serverTimeApi: string, method: RequestMethod = 'POST'): Promise<number> => {
     // Reset state before sync
     state.isSynced = false;
-    state.timeOffset = 0;
+    state.monotonicSyncTime = 0;   // Reset monotonic base time
+    state.serverSyncTimestamp = 0;  // Reset server base time
     state.networkDelay = 0;
 
     try {
       // === NTP Time Capture: t1 (client send time) ===
-      const t1 = Date.now();
+      const t1 = performance.now();
 
       // Construct fetch request configuration
       const fetchOptions: RequestInit = {
@@ -227,38 +240,23 @@ export const ServerClock: ServerClockType = {
       }
       const serverTimestamp = normalizeTimestamp(rawServerTimestamp); // Server receive time
 
-      // === NTP Time Capture: t4 (client receive time) ===
-      const t4 = Date.now();
-
-      // Calculate NTP delay and offset
+      // // Calculate NTP delay
       const t2 = serverTimestamp - 100; // Server receive time
       const t3 = serverTimestamp + 100; // Server send time
+      const t4 = performance.now(); // Client receive time
+
       // Network delay = (client round-trip time)
       const networkDelay = ((t4 - t1) - (t3 - t2)) / 2;
-      // Time offset = [(server receive time - client send time) + (server send time - client receive time)] / 2
-      const timeOffset = ((t2 - t1) + (t3 - t4)) / 2;
 
       // Update global state with NTP results
       state.networkDelay = Math.max(0, networkDelay); // Delay cannot be negative
-      state.timeOffset = timeOffset;
+      state.monotonicSyncTime = t4;    // Save monotonic time at sync completion
+      state.serverSyncTimestamp = serverTimestamp + networkDelay;  // Save server time at sync completion
       state.isSynced = true;
-
-      // Calculate current server time (for return value)
-      const currentServerTime = t3 + networkDelay;
-
-      console.log(`[ServerClock] Time sync successful:
-        - Server UTC timestamp: ${serverTimestamp} (${new Date(serverTimestamp).toUTCString()})
-        - Network delay: ${state.networkDelay}ms
-        - Time offset: ${state.timeOffset.toFixed(2)}ms
-        - Current server time: ${new Date(currentServerTime).toUTCString()}`);
       
-      return currentServerTime;
+      return serverTimestamp;
     } catch (error) {
-      const localTimestamp = Date.now();
-      console.warn(
-        `[ServerClock] Time sync failed, fallback to local time: ${(error as Error).message}`
-      );
-      return localTimestamp;
+      return Date.now();
     }
   }
 };
