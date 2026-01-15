@@ -136,7 +136,7 @@ Provides timezone-aware date formatting and Date object retrieval using synced s
 |--------|-------------|------------|---------|
 | `getDate(timezone?: IANATimezone)` | Gets a Date object with specified timezone context (uses server time if synced, local time if not) | `timezone?`: Optional IANA timezone (e.g., `Asia/Shanghai`, `UTC`; uses system timezone if not provided) | `Date` (UTC-based Date object with timezone metadata) |
 | `format()` | Formats server time to default string format (`YYYY-MM-DD HH:mm:ss`) using system timezone | - | `string` (formatted date string) |
-| `format(format: FormatString)` | Formats server time to custom string format using system timezone | `format`: Custom format string (supports `YYYY`, `MM`, `DD`, `HH`, `hh`, `mm`, `ss`, `MM`, `DD`, `H`, `h`, `m`, `s`, `A`, `a`) | `string` (formatted date string) |
+| `format(format: FormatString)` | Formats server time to custom string format using system timezone | `format`: Custom format string (supports `YYYY`, `MM`, `DD`, `HH`, `hh`, `mm`, `ss`, `M`, `D`, `H`, `h`, `m`, `s`, `A`, `a`) | `string` (formatted date string) |
 | `format(timezone: IANATimezone)` | Formats server time to default string format using specified timezone | `timezone`: IANA timezone (e.g., `Europe/London`) | `string` (formatted date string) |
 | `format(timezone: IANATimezone, format: FormatString)` | Formats server time to custom string format using specified timezone | - `timezone`: IANA timezone<br>- `format`: Custom format string | `string` (formatted date string) |
 
