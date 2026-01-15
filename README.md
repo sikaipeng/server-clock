@@ -80,6 +80,13 @@ async function initializeServerTime() {
     // Sync with server time
     await ServerClock.sync('https://lamhoi.co.uk/timestamp');
     //await ServerClock.sync('https://api.your-domain.com/timestamp', 'GET');
+
+    // Check sync status
+    if (ServerClock.isSynced) {
+        console.log('Successfully synced with server time');
+    } else {
+        console.log('Using local time (sync failed)');
+    }
     
     // Get formatted times for different timezones
     const utcTime = ServerTime.format('UTC', 'YYYY-MM-DD HH:mm:ss');
@@ -99,23 +106,40 @@ async function initializeServerTime() {
 initializeServerTime();
 ```
 
+#### Usage Examples for 12-Hour Format
+
+```ts
+// 1. 12-hour format with uppercase AM/PM (system timezone)
+ServerTime.format('YYYY-MM-DD hh:mm:ss A'); // "2024-01-15 09:45:30 AM"
+
+// 2. 12-hour format with lowercase am/pm (New York timezone)
+ServerTime.format('America/New_York', 'MM/DD/YYYY h:m a'); // "01/15/2024 8:45 pm"
+
+// 3. Mixed 12/24-hour (for reference)
+ServerTime.format('Asia/Tokyo', 'YYYY-MM-DD HH:mm (hh:mm A)'); // "2024-01-16 10:45 (10:45 AM)"
+```
+
 ## API Reference
 
 ### ServerClock
+Handles time synchronization with remote server and exposes sync status.
 
-| Method | Description | Parameters | Returns |
-| --- | --- | --- | --- |
-| sync(serverTimeApi: string) | Synchronizes with server time API, calculates time offset between server and local time | serverTimeApi: URL of the server time API endpoint | Promise<number> (server timestamp in milliseconds UTC) |
+| Member | Type | Description | Parameters | Returns |
+|--------|------|-------------|------------|---------|
+| `isSynced` | `readonly boolean` | **New**: Flag indicating if time synchronization with server was successful (read-only, cannot be modified externally) | - | `boolean` (true = synced with server time, false = using local time) |
+| `sync(serverTimeApi: string, method?: RequestMethod)` | `Method` | Synchronizes with server time API, calculates time offset between server and local time (handles asymmetric network delay) | - `serverTimeApi`: URL of the server time API endpoint (must return JSON with `timestamp` field)<br>- `method?`: Request method (`GET`/`POST`), defaults to `POST` | `Promise<number>` (server timestamp in milliseconds UTC; falls back to local timestamp if sync fails) |
 
 ### ServerTime
+Provides timezone-aware date formatting and Date object retrieval using synced server time.
 
-| Method | Description | Returns |
-| --- | --- | --- |
-| getDate(timezone?: IANATimezone) | Gets a Date object with server time (falls back to local time if sync failed) | Date |
-| format() | Formats server time with default format (YYYY-MM-DD HH:mm:ss) and system timezone | string |
-| format(format: FormatString) | Formats server time with custom format and system timezone | string |
-| format(timezone: IANATimezone) | Formats server time with default format and specified timezone | string |
-| format(timezone: IANATimezone, format: FormatString) | Formats server time with custom format and specified timezone | string |
+| Method | Description | Parameters | Returns |
+|--------|-------------|------------|---------|
+| `getDate(timezone?: IANATimezone)` | Gets a Date object with specified timezone context (uses server time if synced, local time if not) | `timezone?`: Optional IANA timezone (e.g., `Asia/Shanghai`, `UTC`; uses system timezone if not provided) | `Date` (UTC-based Date object with timezone metadata) |
+| `format()` | Formats server time to default string format (`YYYY-MM-DD HH:mm:ss`) using system timezone | - | `string` (formatted date string) |
+| `format(format: FormatString)` | Formats server time to custom string format using system timezone | `format`: Custom format string (supports `YYYY`, `MM`, `DD`, `HH`, `hh`, `mm`, `ss`, `MM`, `DD`, `H`, `h`, `m`, `s`, `A`, `a`) | `string` (formatted date string) |
+| `format(timezone: IANATimezone)` | Formats server time to default string format using specified timezone | `timezone`: IANA timezone (e.g., `Europe/London`) | `string` (formatted date string) |
+| `format(timezone: IANATimezone, format: FormatString)` | Formats server time to custom string format using specified timezone | - `timezone`: IANA timezone<br>- `format`: Custom format string | `string` (formatted date string) |
+
 
 ### Error Handling
 - The sync method gracefully handles:

@@ -4,7 +4,7 @@ import type { IANATimezone } from './timezones.ts';
 // ===================== Type Declarations =====================
 /**
  * Type definition for date format string (e.g., 'YYYY-MM-DD HH:mm:ss')
- */
+*/
 export type FormatString = string;
 
 // Define request method type (restricted to GET/POST only)
@@ -36,10 +36,13 @@ interface ServerTimeType {
    * @returns Date object (server time if synced, local time if failed)
    */
   getDate: (timezone?: IANATimezone) => Date;
-  
+
   /**
    * Format date to string with specified format/timezone
    * Overload function (see ServerTimeFormatFn for details)
+   * Supports:
+   * - Padded/non-padded date/time (MM/M, DD/D, HH/H, hh/h, mm/m, ss/s)
+   * - 12-hour (hh/h + A/a) and 24-hour (HH/H) formats
    */
   format: ServerTimeFormatFn;
 }
@@ -49,34 +52,35 @@ interface ServerTimeType {
  */
 interface ServerClockType {
   /**
-   * Synchronize time with remote server via API
+   * Flag indicating whether time synchronization with server succeeded
+   * Read-only property, external code can only read but not modify it
+   */
+  readonly isSynced: boolean;
+
+  /**
+   * Synchronize time with remote server multiple times, use the lowest delay result
    * @param serverTimeApi API endpoint to fetch server timestamp (UTC milliseconds)
-   * @returns Promise with server timestamp (local timestamp if sync fails, UTC milliseconds)
+   * @param method Request method (default: POST)
+   * @returns Promise with server timestamp (local timestamp if all fails, UTC milliseconds)
    */
   sync: (serverTimeApi: string, method?: RequestMethod) => Promise<number>;
 }
 
 // ===================== Internal Global State =====================
 /**
- * State management for time synchronization
- * - monotonicSyncTime: Monotonic time at sync success (performance.now(), ms)
- * - serverSyncTimestamp: Server timestamp at sync success (UTC milliseconds)
- * - networkDelay: NTP-calculated network delay (milliseconds)
- * - isSynced: Flag indicating if time sync with server was successful
+ * Global state for time synchronization
+ * - offset: Time difference between server and client (serverTime - clientMonotonicTime)
+ * - isSynced: Sync status flag (true = synced with server, false = fallback to local time)
  */
 interface ServerTimeState {
-  monotonicSyncTime: number;    // Monotonic time at sync (not affected by system time)
-  serverSyncTimestamp: number;  // Server time at sync
-  networkDelay: number;
+  offset: number;
   isSynced: boolean;
 }
 
-// Initialize sync state
-const state: ServerTimeState = { 
-  monotonicSyncTime: 0,
-  serverSyncTimestamp: 0,
-  networkDelay: 0,
-  isSynced: false 
+// Initialize sync state (offset = 0 means no time difference initially)
+const state: ServerTimeState = {
+  offset: 0,
+  isSynced: false
 };
 
 // ===================== Internal Utility Constants & Functions =====================
@@ -85,12 +89,26 @@ const state: ServerTimeState = {
  * Maps format tokens to timezone-aware date value getters
  */
 const FORMAT_HANDLERS = {
-  YYYY: (date: Date, tz?: IANATimezone) => getTimezoneDatePart(date, 'year', tz),
-  MM: (date: Date, tz?: IANATimezone) => getTimezoneDatePart(date, 'month', tz),
-  DD: (date: Date, tz?: IANATimezone) => getTimezoneDatePart(date, 'day', tz),
-  HH: (date: Date, tz?: IANATimezone) => getTimezoneDatePart(date, 'hour', tz),
-  mm: (date: Date, tz?: IANATimezone) => getTimezoneDatePart(date, 'minute', tz),
-  ss: (date: Date, tz?: IANATimezone) => getTimezoneDatePart(date, 'second', tz)
+  // Padded
+  YYYY: (date: Date, tz?: IANATimezone) => getTimezoneDatePart(date, 'year', tz, true),
+  MM: (date: Date, tz?: IANATimezone) => getTimezoneDatePart(date, 'month', tz, true),
+  DD: (date: Date, tz?: IANATimezone) => getTimezoneDatePart(date, 'day', tz, true),
+  HH: (date: Date, tz?: IANATimezone) => getTimezoneDatePart(date, 'hour', tz, true, false), // 24h padded
+  hh: (date: Date, tz?: IANATimezone) => getTimezoneDatePart(date, 'hour', tz, true, true),  // 12h padded
+  mm: (date: Date, tz?: IANATimezone) => getTimezoneDatePart(date, 'minute', tz, true),
+  ss: (date: Date, tz?: IANATimezone) => getTimezoneDatePart(date, 'second', tz, true),
+  
+  // non-padded
+  M: (date: Date, tz?: IANATimezone) => getTimezoneDatePart(date, 'month', tz, false),
+  D: (date: Date, tz?: IANATimezone) => getTimezoneDatePart(date, 'day', tz, false),
+  H: (date: Date, tz?: IANATimezone) => getTimezoneDatePart(date, 'hour', tz, false, false), // 24h non-padded
+  h: (date: Date, tz?: IANATimezone) => getTimezoneDatePart(date, 'hour', tz, false, true),  // 12h non-padded
+  m: (date: Date, tz?: IANATimezone) => getTimezoneDatePart(date, 'minute', tz, false),
+  s: (date: Date, tz?: IANATimezone) => getTimezoneDatePart(date, 'second', tz, false),
+  
+  // AM/PM
+  A: (date: Date, tz?: IANATimezone) => getAmPm(date, tz, true),
+  a: (date: Date, tz?: IANATimezone) => getAmPm(date, tz, false)
 } as const;
 
 // Default date format string (used when no format is specified)
@@ -122,47 +140,79 @@ const getServerTimestamp = (): number => {
   // Return system time directly if not synced
   if (!state.isSynced) return Date.now();
 
-  // Core fix: Calculate time difference using monotonic time
-  // performance.now() → Monotonically increasing, not affected by system time
-  const currentMonotonicTime = performance.now();
-  // Calculate monotonic time difference since sync
-  const monotonicTimeDiff = currentMonotonicTime - state.monotonicSyncTime;
-  // Server time = Server time at sync + monotonic time difference
-  return state.serverSyncTimestamp + monotonicTimeDiff;
+  return performance.now() + state.offset;
 };
 
 /**
  * Get timezone-aware date part from UTC timestamp
- * Fix TS1016: Required parameter follows optional parameter → reorder parameters
  * @param date UTC-based Date object (required)
- * @param part Date part to retrieve (required: year/month/day/hour/minute/second)
+ * @param part Date part to retrieve (year/month/day/hour/minute/second)
  * @param tz Optional IANA timezone (system timezone if not provided)
- * @returns Formatted string (2/4 digit) for the target timezone
+ * @param pad Optional: Add leading zero (true = padded, false = non-padded)
+ * @param use12Hour Optional: Use 12-hour format (only applies to 'hour' part)
+ * @returns Formatted string for the target timezone
  */
 const getTimezoneDatePart = (
   date: Date,
   part: 'year' | 'month' | 'day' | 'hour' | 'minute' | 'second',
-  tz?: IANATimezone
+  tz?: IANATimezone,
+  pad: boolean = true,
+  use12Hour: boolean = false
 ): string => {
   // Use system timezone if not specified
   const timeZone = tz || Intl.DateTimeFormat().resolvedOptions().timeZone;
-  
-  // Configure Intl options for timezone-aware parsing
-  const options: Intl.DateTimeFormatOptions = {
+
+  const baseOptions: Intl.DateTimeFormatOptions = {
     timeZone,
-    [part]: part === 'year' ? 'numeric' : '2-digit',
-    hour12: false // Force 24-hour format
+    hour12: use12Hour
+  };
+
+  // Add part-specific options (type-safe for each part)
+  const options: Intl.DateTimeFormatOptions = {
+    ...baseOptions,
+    // For year: always use 'numeric' (4-digit)
+    ...(part === 'year' && { year: 'numeric' }),
+    // For other parts: use '2-digit' for padded, 'numeric' for non-padded
+    ...(part === 'month' && { month: pad ? '2-digit' : 'numeric' }),
+    ...(part === 'day' && { day: pad ? '2-digit' : 'numeric' }),
+    ...(part === 'hour' && { hour: pad ? '2-digit' : 'numeric' }),
+    ...(part === 'minute' && { minute: pad ? '2-digit' : 'numeric' }),
+    ...(part === 'second' && { second: pad ? '2-digit' : 'numeric' })
   };
 
   // Get raw part value from Intl API (timezone-aware)
-  const partValue = new Intl.DateTimeFormat('en-US', options)
+  let partValue = new Intl.DateTimeFormat('en-US', options)
     .formatToParts(date)
     .find(p => p.type === part)?.value || '';
 
-  // Pad with leading zero for consistent formatting
-  return part === 'year' 
-    ? partValue.padStart(4, '0') 
-    : partValue.padStart(2, '0');
+  return partValue;
+};
+
+/**
+ * Get AM/PM indicator for 12-hour format (timezone-aware)
+ * @param date UTC-based Date object
+ * @param tz Optional IANA timezone
+ * @param uppercase Optional: Return uppercase (AM/PM) or lowercase (am/pm)
+ * @returns AM/PM string (e.g., "AM", "pm")
+ */
+const getAmPm = (
+  date: Date,
+  tz?: IANATimezone,
+  uppercase: boolean = true
+): string => {
+  const timeZone = tz || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  
+  // Extract dayPeriod (am/pm) from Intl API
+  const amPmValue = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour12: true,
+    hour: '2-digit'
+  })
+    .formatToParts(date)
+    .find(p => p.type === 'dayPeriod')?.value || '';
+
+  // Return uppercase/lowercase as requested
+  return uppercase ? amPmValue.toUpperCase() : amPmValue.toLowerCase();
 };
 
 /**
@@ -190,74 +240,177 @@ const isValidTimezone = (v: string): v is IANATimezone => {
   ];
   const basicValidTimezones = ['UTC', 'GMT', 'Zulu'];
 
-  return validTimezonePrefixes.some(prefix => v.startsWith(prefix)) 
+  return validTimezonePrefixes.some(prefix => v.startsWith(prefix))
     || basicValidTimezones.includes(v);
 };
+
+/**
+ * Single sync attempt (internal use)
+ * Implements simplified NTP algorithm to calculate time offset and network delay
+ * @param serverTimeApi API endpoint
+ * @param method Request method
+ * @returns Object with offset, delay, serverTimestamp (or null if failed)
+ */
+const singleSyncAttempt = async (serverTimeApi: string, method: RequestMethod): Promise<{
+  offset: number;
+  delay: number;
+  serverTimestamp: number;
+} | null> => {
+  try {
+    // NTP Step 1: Record client send time (monotonic time to avoid system time changes)
+    const t1 = performance.now();
+
+    // Set 5s timeout for request to prevent hanging
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+    const fetchOptions: RequestInit = {
+      method: method,
+      signal: controller.signal,
+      ...(method === 'POST' && {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      })
+    };
+
+    const response = await fetch(serverTimeApi, fetchOptions);
+    clearTimeout(timeoutId); // Clear timeout if request succeeds
+    if (!response.ok) {
+      throw new Error(`HTTP request failed: ${response.status} ${response.statusText}`);
+    }
+
+    const responseData = await response.json();
+    if (!responseData || typeof responseData !== 'object' || !('timestamp' in responseData)) {
+      throw new Error('Invalid response format: missing timestamp field');
+    }
+
+    const rawServerTimestamp = Number(responseData.timestamp);
+    if (isNaN(rawServerTimestamp) || !Number.isFinite(rawServerTimestamp)) {
+      throw new Error('Timestamp is not a valid number');
+    }
+    const serverTimestamp = normalizeTimestamp(rawServerTimestamp);
+
+    // NTP Step 2: Simulate server receive/send time (simplified for browser environment)
+    const t2 = serverTimestamp - 100; // Server receive time (approx)
+    const t3 = serverTimestamp + 100; // Server send time (approx)
+    const t4 = performance.now();     // Client receive time (monotonic)
+
+    // NTP Step 3: Calculate time offset and network delay
+    // Offset = ((t2 - t1) + (t3 - t4)) / 2 → Time difference between server and client
+    // Delay = (t4 - t1) - (t3 - t2) → Actual network round-trip delay
+    const offset = ((t2 - t1) + (t3 - t4)) / 2;
+    const delay = (t4 - t1) - (t3 - t2);
+
+    return { offset, delay, serverTimestamp };
+  } catch (error) {
+    // Return null on failure (will be handled in sync loop)
+    return null;
+  }
+};
+
+/**
+ * Precision delay function without blocking
+ * Uses requestAnimationFrame for browser (higher precision) or setTimeout for Node.js
+ * @param ms Delay in milliseconds
+ */
+async function preciseDelay(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const start = performance.now();
+
+    // Unified timer handler compatible with browser/Node.js
+    const scheduleNextCheck = (callback: (timestamp: number) => void) => {
+      if (typeof requestAnimationFrame !== 'undefined') {
+        return requestAnimationFrame(callback);
+      } else {
+        // Adapt setTimeout to match FrameRequestCallback signature (accept timestamp parameter)
+        return setTimeout(() => callback(performance.now()), 0) as unknown as number;
+      }
+    };
+
+    // Check function matches FrameRequestCallback signature (with timestamp parameter)
+    const check: FrameRequestCallback = (timestamp: number) => {
+      const elapsed = performance.now() - start;
+      if (elapsed >= ms) {
+        resolve();
+        return;
+      }
+      // Schedule next check if delay not reached
+      scheduleNextCheck(check);
+    };
+
+    scheduleNextCheck(check);
+  });
+}
 
 // ===================== Core Exports =====================
 /**
  * ServerClock - Core time synchronization logic
- * Handles fetching server time, NTP calculation, and managing sync state
+ * Implements multiple sync attempts and selects the result with lowest network delay
  */
 export const ServerClock: ServerClockType = {
-  sync: async (serverTimeApi: string, method: RequestMethod = 'POST'): Promise<number> => {
-    // Reset state before sync
+  // Read-only sync status (mapped to internal state)
+  get isSynced() {
+    return state.isSynced;
+  },
+
+  /**
+   * Main sync method (multiple attempts with lowest delay selection)
+   * @param serverTimeApi API endpoint to fetch server timestamp
+   * @param method Request method (default: POST)
+   * @returns Promise with server timestamp (local time if all attempts fail)
+   */
+  sync: async (
+    serverTimeApi: string,
+    method: RequestMethod = 'POST'
+  ): Promise<number> => {
+    // Hardcoded default parameters (3 attempts, 100ms interval)
+    const times: number = 3;
+    const intervalMs: number = 100;
+    const validTimes = Math.max(1, Math.round(times)); // At least 1 attempt
+    const validInterval = Math.max(50, Math.round(intervalMs)); // Min 50ms to avoid request congestion
+
+    // Reset sync state before new sync attempts
     state.isSynced = false;
-    state.monotonicSyncTime = 0;   // Reset monotonic base time
-    state.serverSyncTimestamp = 0;  // Reset server base time
-    state.networkDelay = 0;
+    state.offset = 0;
 
-    try {
-      // === NTP Time Capture: t1 (client send time) ===
-      const t1 = performance.now();
+    // Store successful sync results (filter out failed attempts)
+    const syncResults: Array<{
+      offset: number;
+      delay: number;
+      serverTimestamp: number;
+    }> = [];
 
-      // Construct fetch request configuration
-      const fetchOptions: RequestInit = {
-        method: method, // Use the passed method (POST by default)
-        // Optional: Add default Content-Type for POST requests to adapt to JSON APIs
-        ...(method === 'POST' && {
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        })
-      };
-
-      const response = await fetch(serverTimeApi, fetchOptions);
-      if (!response.ok) {
-        throw new Error(`HTTP request failed: ${response.status} ${response.statusText}`);
+    // Execute multiple sync attempts with interval between them
+    for (let i = 0; i < validTimes; i++) {
+      // Add interval between attempts (skip first attempt)
+      if (i > 0) {
+        await preciseDelay(validInterval);
       }
 
-      const responseData = await response.json();
-      if (!responseData || typeof responseData !== 'object' || !('timestamp' in responseData)) {
-        throw new Error('Invalid response format: missing timestamp field');
+      // Execute single sync attempt and collect valid results
+      const result = await singleSyncAttempt(serverTimeApi, method);
+      if (result) {
+        syncResults.push(result);
       }
+    }
 
-      // === NTP Core Calculation ===
-      // Server timestamp
-      const rawServerTimestamp = Number(responseData.timestamp);
-      if (isNaN(rawServerTimestamp) || !Number.isFinite(rawServerTimestamp)) {
-        throw new Error('Timestamp is not a valid number');
-      }
-      const serverTimestamp = normalizeTimestamp(rawServerTimestamp); // Server receive time
-
-      // // Calculate NTP delay
-      const t2 = serverTimestamp - 100; // Server receive time
-      const t3 = serverTimestamp + 100; // Server send time
-      const t4 = performance.now(); // Client receive time
-
-      // Network delay = (client round-trip time)
-      const networkDelay = ((t4 - t1) - (t3 - t2)) / 2;
-
-      // Update global state with NTP results
-      state.networkDelay = Math.max(0, networkDelay); // Delay cannot be negative
-      state.monotonicSyncTime = t4;    // Save monotonic time at sync completion
-      state.serverSyncTimestamp = serverTimestamp + networkDelay;  // Save server time at sync completion
-      state.isSynced = true;
-      
-      return serverTimestamp;
-    } catch (error) {
+    // Fallback to local time if all attempts fail
+    if (syncResults.length === 0) {
       return Date.now();
     }
+
+    // Select result with lowest network delay (most accurate per NTP best practice)
+    const lowestDelayResult = syncResults.reduce((prev, current) => {
+      return current.delay < prev.delay ? current : prev;
+    });
+
+    // Update global state with the most accurate offset
+    state.offset = lowestDelayResult.offset;
+    state.isSynced = true;
+
+    // Return server timestamp from the most accurate attempt
+    return lowestDelayResult.serverTimestamp;
   }
 };
 
@@ -268,7 +421,6 @@ export const ServerClock: ServerClockType = {
  */
 const getDateFunction = (timezone?: IANATimezone): Date => {
   const utcTimestamp = getServerTimestamp();
-  // Return UTC Date object (timezone conversion handled in formatting)
   return new Date(utcTimestamp);
 };
 
@@ -304,27 +456,11 @@ const formatFunction: ServerTimeFormatFn = function (
 /**
  * ServerTime - Core time formatting and timezone conversion logic
  * Provides getDate (Date object) and format (formatted string) methods
- */
+*/
 export const ServerTime: ServerTimeType = {
   getDate: getDateFunction,
   format: formatFunction
 };
-
-// ===================== Convenience Exports =====================
-/**
- * Convenience export for ServerClock.sync (simpler import)
- */
-export const sync = ServerClock.sync;
-
-/**
- * Convenience export for ServerTime.getDate (simpler import)
- */
-export const getDate = ServerTime.getDate;
-
-/**
- * Convenience export for ServerTime.format (simpler import)
- */
-export const format = ServerTime.format;
 
 // ===================== Default Export =====================
 export default {
