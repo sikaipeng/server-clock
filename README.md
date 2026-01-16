@@ -31,8 +31,13 @@ First, synchronize with server's time API (the API must return a JSON object wit
 
 ```ts
 import { ServerClock } from 'server-clock';
-// Use ServerClock directly
-await ServerClock.sync('https://api.your-domain.com/server-time');
+// Basic sync
+await ServerClock.sync('https://api.your-domain.com/timestamp');
+//await ServerClock.sync('https://api.your-domain.com/timestamp', 'GET');
+
+// Sync with auto-update (re-sync every 5 minutes by default)
+ServerClock.sync('https://api.your-domain.com/timestamp').autoUpdate();
+//ServerClock.sync('https://api.your-domain.com/timestamp').autoUpdate(15000);
 ```
 
 ### Date Formatting
@@ -78,8 +83,7 @@ import { ServerClock, ServerTime } from 'server-clock';
 
 async function initializeServerTime() {
     // Sync with server time
-    await ServerClock.sync('https://lamhoi.co.uk/timestamp');
-    //await ServerClock.sync('https://api.your-domain.com/timestamp', 'GET');
+    await ServerClock.sync('https://api.your-domain.com/timestamp');
 
     // Check sync status
     if (ServerClock.isSynced) {
