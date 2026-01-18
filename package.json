@@ -4,6 +4,14 @@
   "description": "A cross-environment server time synchronization library with mandatory initial sync, timezone conversion, and flexible formatting",
   "author": "SIKAI PENG <dev@peng.sk> (https://peng.sk)",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sikaipeng/server-clock.git"
+  },
+  "homepage": "https://github.com/sikaipeng/server-clock",
+  "bugs": {
+    "url": "https://github.com/sikaipeng/server-clock/issues"
+  },
   "main": "dist/index.cjs.js",
   "module": "dist/index.esm.js",
   "types": "dist/index.d.ts",
