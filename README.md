@@ -136,7 +136,8 @@ Handles time synchronization with remote server and exposes sync status.
 
 | Member | Type | Description | Parameters | Returns |
 |--------|------|-------------|------------|---------|
-| `isSynced` | `readonly boolean` | **New**: Flag indicating if time synchronization with server was successful (read-only, cannot be modified externally) | - | `boolean` (true = synced with server time, false = using local time) |
+| `isSynced` | `readonly boolean` | Flag indicating if time synchronization with server was successful (read-only, cannot be modified externally) | - | `boolean` (true = synced with server time, false = using local time) |
+| `logConfig` | `Method` | Optional log handler. level: debug/warn/error/info | `(level: LogLevel, message: string) => void` |  |
 | `sync(serverTimeApi: string, method?: RequestMethod)` | `Method` | Synchronizes with server time API, calculates time offset between server and local time (handles asymmetric network delay) | - `serverTimeApi`: URL of the server time API endpoint (must return JSON with `timestamp` field)<br>- `method?`: Request method (`GET`/`POST`), defaults to `POST` | `Promise<number>` (server timestamp in milliseconds UTC; falls back to local timestamp if sync fails) |
 
 ### ServerTime
