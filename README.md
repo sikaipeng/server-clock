@@ -31,13 +31,19 @@ First, synchronize with server's time API (the API must return a JSON object wit
 
 ```ts
 import { ServerClock } from 'server-clock';
+
+// If you need to output ServerClock logs
+// ServerClock.logConfig((level, message) => {
+//     console[level](`[ServerClock] ${message}`);
+// });
+
 // Basic sync
-await ServerClock.sync('https://api.your-domain.com/timestamp');
-//await ServerClock.sync('https://api.your-domain.com/timestamp', 'GET');
+ServerClock.sync('https://api.your-domain.com/timestamp');
+// ServerClock.sync('https://api.your-domain.com/timestamp', 'GET');
 
 // Sync with auto-update (re-sync every 5 minutes by default)
 ServerClock.sync('https://api.your-domain.com/timestamp').autoUpdate();
-//ServerClock.sync('https://api.your-domain.com/timestamp').autoUpdate(15000);
+// ServerClock.sync('https://api.your-domain.com/timestamp').autoUpdate(15000);
 ```
 
 ### Date Formatting

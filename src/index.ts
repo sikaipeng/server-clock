@@ -1,9 +1,9 @@
 
 import type { IANATimezone } from './timezones';
-import type { FormatString } from './server-time';
+import type { LogLevel } from './server-time';
 import { ServerClock, ServerTime } from './server-time';
 
 export type { IANATimezone };
-export type { FormatString };
+export type { LogLevel };
 
 export { ServerClock, ServerTime };

@@ -15,6 +15,22 @@ const CONSTANTS = {
 export type FormatString = string;
 export type RequestMethod = 'GET' | 'POST';
 
+export type LogLevel = 'debug' | 'warn' | 'error' | 'info';
+
+interface LogHook {
+  (level: LogLevel, message: string): void;
+}
+
+const config = {
+  logHook: null as LogHook | null,
+};
+
+const log = (level: LogLevel, message: string) => {
+  if (config.logHook) {
+    config.logHook(level, message);
+  }
+};
+
 // Overload type for date formatting function (supports multiple parameter combinations)
 type ServerTimeFormatFn = {
   (): string;
@@ -43,6 +59,7 @@ interface ServerTimeType {
 
 interface ServerClockType {
   readonly isSynced: boolean;                          // Flag indicating if time sync succeeded
+  logConfig: (logHook?: LogHook) => void;
   sync: (serverTimeApi: string, method?: RequestMethod) => SyncPromise; // Core sync method
 }
 
@@ -388,6 +405,10 @@ const __sync = async (serverTimeApi: string, method: RequestMethod = 'POST', isA
   state.offset = lowestDelayResult.offset;
   state.isSynced = true; // Mark sync as successful
 
+  log('info', `Time sync successful:
+        - Server UTC timestamp: ${lowestDelayResult.serverTimestamp} (${new Date(lowestDelayResult.serverTimestamp).toUTCString()})
+        - Offset: ${state.offset}ms`);
+
   // Return server timestamp from the most accurate attempt
   return lowestDelayResult.serverTimestamp;
 };
@@ -431,6 +452,12 @@ export const ServerClock: ServerClockType = {
     return state.isSynced;
   },
 
+  logConfig: (logHook?: LogHook) => {
+    if (logHook) {
+      config.logHook = logHook;
+    }
+  },
+
   /**
    * Public sync method (main entry point for time synchronization)
    * Resets state before each sync and wraps core logic with error handling
@@ -449,6 +476,10 @@ export const ServerClock: ServerClockType = {
         return timestamp;
       } catch (err) {
         state.isSynced = false;
+
+        log('warn',
+        `Time sync failed, fallback to local time: ${(err as Error).message}`);
+
         throw err;
       }
     };
