@@ -101,7 +101,7 @@ const normalizeTimestamp = (timestamp: unknown): number => {
   const intTimestamp = Math.round(timestamp);
   const timestampStr = Math.abs(intTimestamp).toString();
   // Convert 10-digit second timestamps to 13-digit millisecond timestamps
-  return timestampStr.length === 10 ? timestamp * 1000 : timestamp;
+  return timestampStr.length === 10 ? intTimestamp * 1000 : intTimestamp;
 };
 
 /**
@@ -136,17 +136,16 @@ const getTimezoneDatePart = (
 ): string => {
   const timeZone = tz || Intl.DateTimeFormat().resolvedOptions().timeZone;
   const baseOptions: Intl.DateTimeFormatOptions = { timeZone, hour12: use12Hour };
-  const formatType: "2-digit" | "numeric" = pad ? "2-digit" : "numeric";
 
   // Build format options based on requested date part
   const options: Intl.DateTimeFormatOptions = {
     ...baseOptions,
-    year: part === 'year' ? 'numeric' : undefined,
-    month: part === 'month' ? formatType : undefined,
-    day: part === 'day' ? formatType : undefined,
-    hour: part === 'hour' ? formatType : undefined,
-    minute: part === 'minute' ? formatType : undefined,
-    second: part === 'second' ? formatType : undefined
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
   };
 
   // Use cached formatter or create new one
@@ -158,9 +157,11 @@ const getTimezoneDatePart = (
   }
 
   // Extract and return the requested date part
-  return formatter
+  const value = formatter
     .formatToParts(date)
     .find(p => p.type === part)?.value || '';
+
+  return pad ? value : String(Number(value));
 };
 
 /**
