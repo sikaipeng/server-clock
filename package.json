@@ -1,6 +1,6 @@
 {
   "name": "server-clock",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "A cross-environment server time synchronization library with mandatory initial sync, timezone conversion, and flexible formatting",
   "author": "SIKAI PENG <dev@peng.sk> (https://peng.sk)",
   "license": "MIT",
